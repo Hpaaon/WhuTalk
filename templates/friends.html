@@ -1,0 +1,196 @@
+{% extends "layout.html" %}
+
+{% block title %}好友管理{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- 左侧：搜索 & 加好友 -->
+    <div class="col-md-5">
+        <div class="card shadow mb-4">
+            <div class="card-body">
+                <h5 class="card-title">🔍 搜索用户</h5>
+                <form method="POST" action="{{ url_for('friends') }}">
+                    <div class="input-group">
+                        <input type="text" class="form-control" name="search"
+                               placeholder="输入用户名搜索..."
+                               value="{{ search_query }}" required>
+                        <button type="submit" class="btn btn-primary">搜索</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        {% if search_query and search_results %}
+        <div class="card shadow mb-4">
+            <div class="card-body">
+                <h5 class="card-title">搜索结果（{{ search_results|length }}）</h5>
+                {% for user in search_results %}
+                <div class="d-flex align-items-center justify-content-between border-bottom py-2">
+                    <div class="d-flex align-items-center">
+                        <div class="me-3">
+                            {% if user.profile_pic %}
+                            <img src="{{ user.profile_pic }}" alt="头像" class="rounded-circle"
+                                 width="48" height="48" style="object-fit: cover;">
+                            {% else %}
+                            <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white"
+                                 style="width: 48px; height: 48px; font-size: 18px;">
+                                {{ user.username[0] | upper }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div>
+                            <strong>{{ user.username }}</strong>
+                            {% if user.bio %}
+                            <small class="text-muted d-block">{{ user.bio[:50] }}{% if user.bio|length > 50 %}...{% endif %}</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div>
+                        {% if user.relationship is none %}
+                        <form method="POST" action="{{ url_for('send_friend_request', target_id=user.id) }}" class="m-0">
+                            <button type="submit" class="btn btn-sm btn-outline-primary">➕ 添加好友</button>
+                        </form>
+                        {% elif user.relationship.status == 'pending' %}
+                            {% if user.relationship.user_id == session.user_id %}
+                            <span class="badge bg-warning text-dark">已发送请求</span>
+                            {% else %}
+                            <form method="POST" action="{{ url_for('accept_friend_request', request_id=user.relationship.id) }}" class="m-0">
+                                <button type="submit" class="btn btn-sm btn-success">✅ 接受请求</button>
+                            </form>
+                            {% endif %}
+                        {% elif user.relationship.status == 'accepted' %}
+                        <span class="badge bg-success">已是好友</span>
+                        {% elif user.relationship.status == 'rejected' %}
+                        <form method="POST" action="{{ url_for('send_friend_request', target_id=user.id) }}" class="m-0">
+                            <button type="submit" class="btn btn-sm btn-outline-primary">重新添加</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% elif search_query and not search_results %}
+        <div class="alert alert-info">未找到匹配的用户</div>
+        {% endif %}
+    </div>
+
+    <!-- 右侧：好友请求 & 好友列表 -->
+    <div class="col-md-7">
+        <!-- 待处理请求 -->
+        {% if pending_requests %}
+        <div class="card shadow mb-4 border-warning">
+            <div class="card-header bg-warning bg-opacity-10">
+                <h5 class="card-title mb-0">📩 待处理的好友请求（{{ pending_requests|length }}）</h5>
+            </div>
+            <div class="card-body">
+                {% for req in pending_requests %}
+                <div class="d-flex align-items-center justify-content-between border-bottom py-2">
+                    <div class="d-flex align-items-center">
+                        <div class="me-3">
+                            {% if req.profile_pic %}
+                            <img src="{{ req.profile_pic }}" alt="头像" class="rounded-circle"
+                                 width="48" height="48" style="object-fit: cover;">
+                            {% else %}
+                            <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white"
+                                 style="width: 48px; height: 48px; font-size: 18px;">
+                                {{ req.username[0] | upper }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div>
+                            <strong>{{ req.username }}</strong>
+                            {% if req.bio %}
+                            <small class="text-muted d-block">{{ req.bio[:50] }}{% if req.bio|length > 50 %}...{% endif %}</small>
+                            {% endif %}
+                            <small class="text-muted">{{ req.created_at[:10] }}</small>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <form method="POST" action="{{ url_for('accept_friend_request', request_id=req.request_id) }}" class="m-0">
+                            <button type="submit" class="btn btn-sm btn-success">✅ 接受</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('reject_friend_request', request_id=req.request_id) }}" class="m-0">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">❌ 拒绝</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 已发送的请求 -->
+        {% if sent_requests %}
+        <div class="card shadow mb-4">
+            <div class="card-header bg-info bg-opacity-10">
+                <h5 class="card-title mb-0">📤 已发送的请求（{{ sent_requests|length }}）</h5>
+            </div>
+            <div class="card-body">
+                {% for req in sent_requests %}
+                <div class="d-flex align-items-center border-bottom py-2">
+                    <div class="me-3">
+                        {% if req.profile_pic %}
+                        <img src="{{ req.profile_pic }}" alt="头像" class="rounded-circle"
+                             width="48" height="48" style="object-fit: cover;">
+                        {% else %}
+                        <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white"
+                             style="width: 48px; height: 48px; font-size: 18px;">
+                            {{ req.username[0] | upper }}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <strong>{{ req.username }}</strong>
+                        <span class="badge bg-warning text-dark ms-2">等待回应</span>
+                        {% if req.bio %}
+                        <small class="text-muted d-block">{{ req.bio[:50] }}{% if req.bio|length > 50 %}...{% endif %}</small>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 好友列表 -->
+        <div class="card shadow mb-4">
+            <div class="card-header bg-success bg-opacity-10">
+                <h5 class="card-title mb-0">👥 我的好友（{{ accepted_friends|length }}）</h5>
+            </div>
+            <div class="card-body">
+                {% if accepted_friends %}
+                <div class="list-group list-group-flush">
+                    {% for friend in accepted_friends %}
+                    <div class="list-group-item d-flex align-items-center">
+                        <div class="me-3">
+                            {% if friend.profile_pic %}
+                            <img src="{{ friend.profile_pic }}" alt="头像" class="rounded-circle"
+                                 width="48" height="48" style="object-fit: cover;">
+                            {% else %}
+                            <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white"
+                                 style="width: 48px; height: 48px; font-size: 18px;">
+                                {{ friend.username[0] | upper }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="flex-grow-1">
+                            <strong>{{ friend.username }}</strong>
+                            {% if friend.bio %}
+                            <small class="text-muted d-block">{{ friend.bio[:60] }}{% if friend.bio|length > 60 %}...{% endif %}</small>
+                            {% endif %}
+                            <small class="text-muted">好友自 {{ friend.friends_since[:10] }}</small>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted text-center my-3">
+                    😊 你还没有好友，快去搜索添加吧！
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -158,6 +158,199 @@ def timeline():
     # 临时占位，后面会被替换为真正的动态列表
     return "<h1>时间线页面（待实现）</h1><p>你已经登录了，这里是动态流的占位页面。</p>"
 
+# ========== 好友管理模块 ==========
+
+# ---------- 路由：好友管理主页 ----------
+@app.route('/friends', methods=['GET', 'POST'])
+@login_required
+def friends():
+    """
+    好友管理主页：
+    - GET：展示好友列表、待处理请求、搜索框
+    - POST：处理搜索请求
+    """
+    db = get_db()
+    user_id = session['user_id']
+    search_results = []
+    search_query = ''
+
+    # 处理搜索
+    if request.method == 'POST' and 'search' in request.form:
+        search_query = request.form.get('search', '').strip()
+        if search_query:
+            search_results = db.execute(
+                '''SELECT id, username, bio, profile_pic, created_at
+                   FROM users
+                   WHERE username LIKE ? AND id != ?
+                   LIMIT 20''',
+                (f'%{search_query}%', user_id)
+            ).fetchall()
+
+            # 标记每个搜索结果与当前用户的好友关系状态
+            enriched_results = []
+            for u in search_results:
+                rel = db.execute(
+                    '''SELECT id, status, user_id, friend_id
+                       FROM friendships
+                       WHERE (user_id = ? AND friend_id = ?)
+                          OR (user_id = ? AND friend_id = ?)''',
+                    (user_id, u['id'], u['id'], user_id)
+                ).fetchone()
+                u_dict = dict(u)
+                u_dict['relationship'] = rel
+                enriched_results.append(u_dict)
+            search_results = enriched_results
+
+    # 获取待处理的好友请求（别人发给我的）
+    pending_requests = db.execute(
+        '''SELECT f.id AS request_id, f.user_id AS from_id, f.created_at,
+                  u.username, u.bio, u.profile_pic
+           FROM friendships f
+           JOIN users u ON f.user_id = u.id
+           WHERE f.friend_id = ? AND f.status = 'pending'
+           ORDER BY f.created_at DESC''',
+        (user_id,)
+    ).fetchall()
+
+    # 获取已接受的好友列表
+    accepted_friends = db.execute(
+        '''SELECT u.id, u.username, u.bio, u.profile_pic, f.created_at AS friends_since
+           FROM friendships f
+           JOIN users u ON (CASE WHEN f.user_id = ? THEN f.friend_id ELSE f.user_id END) = u.id
+           WHERE f.status = 'accepted'
+             AND (f.user_id = ? OR f.friend_id = ?)
+           ORDER BY u.username ASC''',
+        (user_id, user_id, user_id)
+    ).fetchall()
+
+    # 获取我发出的待处理请求
+    sent_requests = db.execute(
+        '''SELECT f.id AS request_id, f.friend_id AS to_id, f.created_at,
+                  u.username, u.bio, u.profile_pic
+           FROM friendships f
+           JOIN users u ON f.friend_id = u.id
+           WHERE f.user_id = ? AND f.status = 'pending'
+           ORDER BY f.created_at DESC''',
+        (user_id,)
+    ).fetchall()
+
+    return render_template('friends.html',
+                           search_results=search_results,
+                           search_query=search_query,
+                           pending_requests=pending_requests,
+                           accepted_friends=accepted_friends,
+                           sent_requests=sent_requests)
+
+
+# ---------- 路由：发送好友请求 ----------
+@app.route('/friends/request/<int:target_id>', methods=['POST'])
+@login_required
+def send_friend_request(target_id):
+    """向目标用户发送好友请求"""
+    user_id = session['user_id']
+    db = get_db()
+
+    # 不能添加自己
+    if target_id == user_id:
+        flash('不能添加自己为好友', 'danger')
+        return redirect(url_for('friends'))
+
+    # 目标是否存在
+    target = db.execute('SELECT id, username FROM users WHERE id = ?', (target_id,)).fetchone()
+    if not target:
+        flash('目标用户不存在', 'danger')
+        return redirect(url_for('friends'))
+
+    # 是否已存在关系（双向检查）
+    existing = db.execute(
+        '''SELECT id, status, user_id, friend_id
+           FROM friendships
+           WHERE (user_id = ? AND friend_id = ?)
+              OR (user_id = ? AND friend_id = ?)''',
+        (user_id, target_id, target_id, user_id)
+    ).fetchone()
+
+    if existing:
+        if existing['status'] == 'pending':
+            if existing['user_id'] == user_id:
+                flash('你已经发送过好友请求了，请等待对方处理', 'warning')
+            else:
+                # 对方已发来请求 → 直接接受
+                db.execute('UPDATE friendships SET status = ? WHERE id = ?',
+                           ('accepted', existing['id']))
+                db.commit()
+                flash(f'你和 {target["username"]} 已经成为好友了！', 'success')
+        elif existing['status'] == 'accepted':
+            flash('你们已经是好友了', 'info')
+        elif existing['status'] == 'rejected':
+            # 覆盖旧记录，重新发起
+            db.execute('DELETE FROM friendships WHERE id = ?', (existing['id'],))
+            db.commit()
+            db.execute('INSERT INTO friendships (user_id, friend_id, status) VALUES (?, ?, ?)',
+                       (user_id, target_id, 'pending'))
+            db.commit()
+            flash(f'已重新向 {target["username"]} 发送好友请求', 'success')
+        return redirect(url_for('friends'))
+
+    # 无现存关系，直接插入
+    db.execute('INSERT INTO friendships (user_id, friend_id, status) VALUES (?, ?, ?)',
+               (user_id, target_id, 'pending'))
+    db.commit()
+    flash(f'已向 {target["username"]} 发送好友请求', 'success')
+    return redirect(url_for('friends'))
+
+
+# ---------- 路由：接受好友请求 ----------
+@app.route('/friends/accept/<int:request_id>', methods=['POST'])
+@login_required
+def accept_friend_request(request_id):
+    """接受好友请求（仅接收方可操作）"""
+    user_id = session['user_id']
+    db = get_db()
+
+    req = db.execute(
+        'SELECT * FROM friendships WHERE id = ? AND friend_id = ? AND status = ?',
+        (request_id, user_id, 'pending')
+    ).fetchone()
+
+    if not req:
+        flash('无效的好友请求', 'danger')
+        return redirect(url_for('friends'))
+
+    db.execute('UPDATE friendships SET status = ? WHERE id = ?',
+               ('accepted', request_id))
+    db.commit()
+
+    sender = db.execute('SELECT username FROM users WHERE id = ?', (req['user_id'],)).fetchone()
+    flash(f'你和 {sender["username"]} 已经成为好友了！', 'success')
+    return redirect(url_for('friends'))
+
+
+# ---------- 路由：拒绝好友请求 ----------
+@app.route('/friends/reject/<int:request_id>', methods=['POST'])
+@login_required
+def reject_friend_request(request_id):
+    """拒绝好友请求（仅接收方可操作）"""
+    user_id = session['user_id']
+    db = get_db()
+
+    req = db.execute(
+        'SELECT * FROM friendships WHERE id = ? AND friend_id = ? AND status = ?',
+        (request_id, user_id, 'pending')
+    ).fetchone()
+
+    if not req:
+        flash('无效的好友请求', 'danger')
+        return redirect(url_for('friends'))
+
+    db.execute('UPDATE friendships SET status = ? WHERE id = ?',
+               ('rejected', request_id))
+    db.commit()
+
+    sender = db.execute('SELECT username FROM users WHERE id = ?', (req['user_id'],)).fetchone()
+    flash(f'已拒绝 {sender["username"]} 的好友请求', 'info')
+    return redirect(url_for('friends'))
+
 # ---------- 启动应用 ----------
 if __name__ == '__main__':
     with app.app_context():
