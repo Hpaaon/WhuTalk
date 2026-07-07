@@ -1,0 +1,165 @@
+{% extends "layout.html" %}
+
+{% block title %}私信聊天{% endblock %}
+
+{% block content %}
+<div class="row h-100" style="min-height: 500px;">
+    <!-- 会话列表 -->
+    <div class="col-md-4 border-right">
+        <div class="card h-100">
+            <div class="card-header">
+                <h5 class="card-title">💬 聊天会话</h5>
+            </div>
+            <div class="card-body overflow-auto">
+                {% if sessions %}
+                    {% for s in sessions %}
+                    <a href="{{ url_for('chat_history', friend_id=s.user.id) }}" 
+                       class="d-flex align-items-center p-3 border-bottom text-decoration-none text-dark {% if friend and friend.id == s.user.id %}bg-primary text-white{% endif %}">
+                        <div class="me-3">
+                            {% if s.user.profile_pic %}
+                            <img src="{{ s.user.profile_pic }}" alt="头像" class="rounded-circle"
+                                 width="48" height="48" style="object-fit: cover;">
+                            {% else %}
+                            <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white"
+                                 style="width: 48px; height: 48px; font-size: 18px;">
+                                {{ s.user.username[0] | upper }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="flex-grow-1 min-width-0">
+                            <strong>{{ s.user.username }}</strong>
+                            <p class="text-sm text-muted truncate">{{ s.last_message }}</p>
+                        </div>
+                        {% if s.unread_count > 0 %}
+                        <span class="badge bg-danger">{{ s.unread_count }}</span>
+                        {% endif %}
+                    </a>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted text-center py-4">暂无聊天记录</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- 聊天窗口 -->
+    <div class="col-md-8">
+        {% if friend %}
+        <div class="card h-100 flex flex-column">
+            <!-- 聊天头部 -->
+            <div class="card-header">
+                <div class="d-flex align-items-center">
+                    <div class="me-3">
+                        {% if friend.profile_pic %}
+                        <img src="{{ friend.profile_pic }}" alt="头像" class="rounded-circle"
+                             width="40" height="40" style="object-fit: cover;">
+                        {% else %}
+                        <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white"
+                             style="width: 40px; height: 40px; font-size: 16px;">
+                            {{ friend.username[0] | upper }}
+                        </div>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <strong>{{ friend.username }}</strong>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 消息列表 -->
+            <div class="card-body overflow-auto flex-grow-1" id="messages-container" style="height: 400px;">
+                {% if messages %}
+                    {% for msg in messages %}
+                    <div class="d-flex mb-3 {% if msg.sender_id == current_user_id %}justify-content-end{% else %}justify-content-start{% endif %}">
+                        <div class="max-w-[70%]">
+                            {% if msg.sender_id != current_user_id %}
+                            <div class="text-sm text-muted mb-1">{{ msg.username }}</div>
+                            {% endif %}
+                            <div class="px-4 py-2 rounded-2xl {% if msg.sender_id == current_user_id %}bg-primary text-white rounded-tr-none{% else %}bg-light text-dark rounded-tl-none{% endif %}">
+                                {{ msg.content }}
+                            </div>
+                            <div class="text-xs text-muted mt-1 {% if msg.sender_id == current_user_id %}text-right{% endif %}">
+                                {{ msg.created_at[:16] }}
+                                {% if msg.sender_id == current_user_id %}
+                                    {% if msg.is_read %}✓✓{% else %}✓{% endif %}
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-muted text-center py-4">开始聊天吧！</p>
+                {% endif %}
+            </div>
+
+            <!-- 发送消息 -->
+            <div class="card-footer">
+                <form id="send-form" class="d-flex">
+                    <input type="text" id="message-input" class="form-control me-2"
+                           placeholder="输入消息..." required>
+                    <button type="submit" class="btn btn-primary">发送</button>
+                </form>
+            </div>
+        </div>
+        {% else %}
+        <div class="card h-100">
+            <div class="card-body d-flex align-items-center justify-content-center">
+                <p class="text-muted">选择一个会话开始聊天</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if friend %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+    const socket = io();
+    const messagesContainer = document.getElementById('messages-container');
+    const sendForm = document.getElementById('send-form');
+    const messageInput = document.getElementById('message-input');
+    
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    
+    sendForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const content = messageInput.value.trim();
+        if (!content) return;
+        
+        socket.emit('private_message', {
+            receiver_id: {{ friend.id }},
+            content: content
+        });
+        
+        messageInput.value = '';
+    });
+    
+    socket.on('message_sent', (message) => {
+        appendMessage(message);
+    });
+    
+    socket.on('new_message', (message) => {
+        appendMessage(message);
+    });
+    
+    function appendMessage(message) {
+        const isOwn = message.sender_id == {{ current_user_id }};
+        const div = document.createElement('div');
+        div.className = `d-flex mb-3 ${isOwn ? 'justify-content-end' : 'justify-content-start'}`;
+        div.innerHTML = `
+            <div class="max-w-[70%]">
+                ${!isOwn ? `<div class="text-sm text-muted mb-1">${message.username}</div>` : ''}
+                <div class="px-4 py-2 rounded-2xl ${isOwn ? 'bg-primary text-white rounded-tr-none' : 'bg-light text-dark rounded-tl-none'}">
+                    ${message.content}
+                </div>
+                <div class="text-xs text-muted mt-1 ${isOwn ? 'text-right' : ''}">
+                    ${message.created_at ? message.created_at.substring(0, 16) : new Date().toLocaleString()}
+                </div>
+            </div>
+        `;
+        messagesContainer.appendChild(div);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+</script>
+{% endif %}
+{% endblock %}

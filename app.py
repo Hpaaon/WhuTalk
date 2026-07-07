@@ -5,15 +5,87 @@ import secrets
 from flask import Flask, render_template, request, redirect, url_for, session, flash, g, send_from_directory
 from werkzeug.utils import secure_filename
 from functools import wraps
+from flask_socketio import SocketIO, emit
 
 # ---------- 初始化配置 ----------
 app = Flask(__name__)
 app.secret_key = 'whutalk-dev-secret-key-change-in-production'  # 用于加密 Session
+socketio = SocketIO(app, cors_allowed_origins="*")
 DATABASE = 'social.db'
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+user_sockets = {}
+
+# ========== M6 实时私信聊天模块 ==========
+
+# ---------- WebSocket 连接处理 ----------
+@socketio.on('connect')
+def handle_connect():
+    if 'user_id' not in session:
+        return False
+    
+    user_id = session['user_id']
+    user_sockets[user_id] = request.sid
+    print(f"User {user_id} connected via WebSocket")
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    user_id = session.get('user_id')
+    if user_id and user_id in user_sockets:
+        del user_sockets[user_id]
+        print(f"User {user_id} disconnected from WebSocket")
+
+# ---------- WebSocket 事件：发送私信 ----------
+@socketio.on('private_message')
+def handle_private_message(data):
+    sender_id = session.get('user_id')
+    if not sender_id:
+        return
+    
+    receiver_id = data.get('receiver_id')
+    content = data.get('content', '').strip()
+    
+    if not receiver_id or not content:
+        return
+    
+    db = get_db()
+    db.execute('INSERT INTO messages (sender_id, receiver_id, content) VALUES (?, ?, ?)',
+               (sender_id, receiver_id, content))
+    db.commit()
+    
+    message = db.execute(
+        '''SELECT m.id, m.sender_id, m.receiver_id, m.content, m.created_at,
+                  u.username, u.profile_pic
+           FROM messages m
+           JOIN users u ON m.sender_id = u.id
+           WHERE m.id = last_insert_rowid()''',
+    ).fetchone()
+    
+    if receiver_id in user_sockets:
+        emit('new_message', dict(message), room=user_sockets[receiver_id])
+    
+    emit('message_sent', dict(message))
+
+# ---------- WebSocket 事件：标记消息已读 ----------
+@socketio.on('mark_read')
+def handle_mark_read(data):
+    user_id = session.get('user_id')
+    if not user_id:
+        return
+    
+    sender_id = data.get('sender_id')
+    if not sender_id:
+        return
+    
+    db = get_db()
+    db.execute('UPDATE messages SET is_read = 1 WHERE receiver_id = ? AND sender_id = ? AND is_read = 0',
+               (user_id, sender_id))
+    db.commit()
+    
+    emit('read_confirmed', {'sender_id': sender_id})
 
 # ---------- 数据库操作工具 ----------
 def get_db():
@@ -68,6 +140,16 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (post_id) REFERENCES posts (id),
             FOREIGN KEY (user_id) REFERENCES users (id)
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id INTEGER NOT NULL,
+            receiver_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            is_read INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (sender_id) REFERENCES users (id),
+            FOREIGN KEY (receiver_id) REFERENCES users (id)
         );
     ''')
     db.commit()
@@ -181,6 +263,72 @@ def logout():
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# ========== M2 个人资料管理模块 ==========
+
+# ---------- 路由：查看个人主页 ----------
+@app.route('/profile/<int:user_id>')
+@login_required
+def profile(user_id):
+    db = get_db()
+    
+    user = db.execute(
+        'SELECT id, username, bio, profile_pic, created_at FROM users WHERE id = ?',
+        (user_id,)
+    ).fetchone()
+    
+    if not user:
+        flash('用户不存在', 'danger')
+        return redirect(url_for('timeline'))
+    
+    posts = db.execute(
+        '''SELECT p.id, p.content, p.image_path, p.created_at
+           FROM posts p
+           WHERE p.user_id = ?
+           ORDER BY p.created_at DESC''',
+        (user_id,)
+    ).fetchall()
+    
+    is_own_profile = session['user_id'] == user_id
+    
+    return render_template('profile.html', user=user, posts=posts, is_own_profile=is_own_profile)
+
+# ---------- 路由：编辑个人资料 ----------
+@app.route('/profile/edit', methods=['GET', 'POST'])
+@login_required
+def edit_profile():
+    user_id = session['user_id']
+    db = get_db()
+    
+    user = db.execute('SELECT id, username, bio, profile_pic FROM users WHERE id = ?', (user_id,)).fetchone()
+    
+    if request.method == 'POST':
+        bio = request.form.get('bio', '').strip()
+        
+        profile_pic = user['profile_pic']
+        if 'profile_pic' in request.files:
+            file = request.files['profile_pic']
+            if file.filename and allowed_file(file.filename):
+                if profile_pic:
+                    old_filename = profile_pic.split('/')[-1]
+                    old_path = os.path.join(app.config['UPLOAD_FOLDER'], old_filename)
+                    if os.path.exists(old_path):
+                        os.remove(old_path)
+                
+                filename = secure_filename(file.filename)
+                ext = filename.rsplit('.', 1)[1].lower()
+                new_filename = f"avatar_{user_id}_{secrets.token_hex(8)}.{ext}"
+                file.save(os.path.join(app.config['UPLOAD_FOLDER'], new_filename))
+                profile_pic = f"/uploads/{new_filename}"
+        
+        db.execute('UPDATE users SET bio = ?, profile_pic = ? WHERE id = ?',
+                   (bio, profile_pic, user_id))
+        db.commit()
+        
+        flash('✅ 个人资料更新成功！', 'success')
+        return redirect(url_for('profile', user_id=user_id))
+    
+    return render_template('edit_profile.html', user=user)
 
 # ---------- 路由：发布动态 ----------
 @app.route('/post', methods=['POST'])
@@ -530,8 +678,79 @@ def delete_friend(friend_id):
     flash(f'已删除好友 {name}', 'info')
     return redirect(url_for('friends'))
 
+# ---------- 路由：聊天会话列表 ----------
+@app.route('/chat')
+@login_required
+def chat_list():
+    user_id = session['user_id']
+    db = get_db()
+    
+    sessions = db.execute(
+        '''SELECT DISTINCT 
+               CASE WHEN m.sender_id = ? THEN m.receiver_id ELSE m.sender_id END AS other_id,
+               MAX(m.created_at) AS last_time
+           FROM messages m
+           WHERE m.sender_id = ? OR m.receiver_id = ?
+           GROUP BY other_id
+           ORDER BY last_time DESC''',
+        (user_id, user_id, user_id)
+    ).fetchall()
+    
+    chat_sessions = []
+    for s in sessions:
+        other_user = db.execute('SELECT id, username, profile_pic FROM users WHERE id = ?', (s['other_id'],)).fetchone()
+        if other_user:
+            unread_count = db.execute(
+                'SELECT COUNT(*) AS cnt FROM messages WHERE receiver_id = ? AND sender_id = ? AND is_read = 0',
+                (user_id, s['other_id'])
+            ).fetchone()['cnt']
+            
+            last_msg = db.execute(
+                '''SELECT content FROM messages
+                   WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+                   ORDER BY created_at DESC LIMIT 1''',
+                (user_id, s['other_id'], s['other_id'], user_id)
+            ).fetchone()
+            
+            chat_sessions.append({
+                'user': other_user,
+                'unread_count': unread_count,
+                'last_message': last_msg['content'][:30] + '...' if last_msg else '',
+                'last_time': s['last_time']
+            })
+    
+    return render_template('chat.html', sessions=chat_sessions, current_user_id=user_id)
+
+# ---------- 路由：聊天历史 ----------
+@app.route('/chat/<int:friend_id>')
+@login_required
+def chat_history(friend_id):
+    user_id = session['user_id']
+    db = get_db()
+    
+    friend = db.execute('SELECT id, username, profile_pic FROM users WHERE id = ?', (friend_id,)).fetchone()
+    if not friend:
+        flash('好友不存在', 'danger')
+        return redirect(url_for('chat_list'))
+    
+    messages = db.execute(
+        '''SELECT m.id, m.sender_id, m.receiver_id, m.content, m.is_read, m.created_at,
+                  u.username, u.profile_pic
+           FROM messages m
+           JOIN users u ON m.sender_id = u.id
+           WHERE (m.sender_id = ? AND m.receiver_id = ?) OR (m.sender_id = ? AND m.receiver_id = ?)
+           ORDER BY m.created_at ASC''',
+        (user_id, friend_id, friend_id, user_id)
+    ).fetchall()
+    
+    db.execute('UPDATE messages SET is_read = 1 WHERE receiver_id = ? AND sender_id = ? AND is_read = 0',
+               (user_id, friend_id))
+    db.commit()
+    
+    return render_template('chat.html', friend=friend, messages=messages, current_user_id=user_id)
+
 # ---------- 启动应用 ----------
 if __name__ == '__main__':
     with app.app_context():
         init_db()
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000)

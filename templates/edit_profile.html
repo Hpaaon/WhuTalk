@@ -1,0 +1,52 @@
+{% extends "layout.html" %}
+
+{% block title %}编辑个人资料{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6 mx-auto">
+        <div class="card shadow">
+            <div class="card-body">
+                <h5 class="card-title">✏️ 编辑个人资料</h5>
+                
+                <form method="POST" action="{{ url_for('edit_profile') }}" enctype="multipart/form-data">
+                    <!-- 当前头像预览 -->
+                    <div class="mb-4 text-center">
+                        {% if user.profile_pic %}
+                        <img src="{{ user.profile_pic }}" alt="当前头像" class="rounded-circle"
+                             width="128" height="128" style="object-fit: cover;">
+                        {% else %}
+                        <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white mx-auto"
+                             style="width: 128px; height: 128px; font-size: 48px;">
+                            {{ user.username[0] | upper }}
+                        </div>
+                        {% endif %}
+                        <p class="text-sm text-muted mt-2">当前头像</p>
+                    </div>
+
+                    <!-- 上传新头像 -->
+                    <div class="mb-3">
+                        <label for="profile_pic" class="form-label">更换头像</label>
+                        <input type="file" class="form-control" id="profile_pic" name="profile_pic"
+                               accept="image/*">
+                        <small class="text-muted">支持 PNG、JPG、JPEG、GIF 格式</small>
+                    </div>
+
+                    <!-- 个人简介 -->
+                    <div class="mb-3">
+                        <label for="bio" class="form-label">个人简介</label>
+                        <textarea class="form-control" id="bio" name="bio" rows="4"
+                                  placeholder="介绍一下你自己...">{{ user.bio if user.bio else '' }}</textarea>
+                    </div>
+
+                    <!-- 提交按钮 -->
+                    <div class="d-flex justify-content-between">
+                        <a href="{{ url_for('profile', user_id=user.id) }}" class="btn btn-secondary">取消</a>
+                        <button type="submit" class="btn btn-primary">保存更改</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
