@@ -468,6 +468,39 @@ def reject_friend_request(request_id):
     flash(f'已拒绝 {sender["username"]} 的好友请求', 'info')
     return redirect(url_for('friends'))
 
+
+# ---------- 路由：删除好友 ----------
+@app.route('/friends/delete/<int:friend_id>', methods=['POST'])
+@login_required
+def delete_friend(friend_id):
+    """删除已建立的好友关系（双向均可操作）"""
+    user_id = session['user_id']
+    db = get_db()
+
+    # 查找双向的 accepted 关系记录
+    friendship = db.execute(
+        '''SELECT id, user_id, friend_id FROM friendships
+           WHERE status = 'accepted'
+             AND ((user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?))''',
+        (user_id, friend_id, friend_id, user_id)
+    ).fetchone()
+
+    if not friendship:
+        flash('未找到该好友关系', 'danger')
+        return redirect(url_for('friends'))
+
+    # 获取对方用户名（用于提示）
+    friend_username = db.execute(
+        'SELECT username FROM users WHERE id = ?', (friend_id,)
+    ).fetchone()
+
+    db.execute('DELETE FROM friendships WHERE id = ?', (friendship['id'],))
+    db.commit()
+
+    name = friend_username['username'] if friend_username else '该用户'
+    flash(f'已删除好友 {name}', 'info')
+    return redirect(url_for('friends'))
+
 # ---------- 启动应用 ----------
 if __name__ == '__main__':
     with app.app_context():
