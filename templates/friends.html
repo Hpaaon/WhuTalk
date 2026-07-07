@@ -162,25 +162,31 @@
                 {% if accepted_friends %}
                 <div class="list-group list-group-flush">
                     {% for friend in accepted_friends %}
-                    <div class="list-group-item d-flex align-items-center">
-                        <div class="me-3">
-                            {% if friend.profile_pic %}
-                            <img src="{{ friend.profile_pic }}" alt="头像" class="rounded-circle"
-                                 width="48" height="48" style="object-fit: cover;">
-                            {% else %}
-                            <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white"
-                                 style="width: 48px; height: 48px; font-size: 18px;">
-                                {{ friend.username[0] | upper }}
+                    <div class="list-group-item d-flex align-items-center justify-content-between">
+                        <div class="d-flex align-items-center">
+                            <div class="me-3">
+                                {% if friend.profile_pic %}
+                                <img src="{{ friend.profile_pic }}" alt="头像" class="rounded-circle"
+                                     width="48" height="48" style="object-fit: cover;">
+                                {% else %}
+                                <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white"
+                                     style="width: 48px; height: 48px; font-size: 18px;">
+                                    {{ friend.username[0] | upper }}
+                                </div>
+                                {% endif %}
                             </div>
-                            {% endif %}
+                            <div>
+                                <strong>{{ friend.username }}</strong>
+                                {% if friend.bio %}
+                                <small class="text-muted d-block">{{ friend.bio[:60] }}{% if friend.bio|length > 60 %}...{% endif %}</small>
+                                {% endif %}
+                                <small class="text-muted">好友自 {{ friend.friends_since[:10] }}</small>
+                            </div>
                         </div>
-                        <div class="flex-grow-1">
-                            <strong>{{ friend.username }}</strong>
-                            {% if friend.bio %}
-                            <small class="text-muted d-block">{{ friend.bio[:60] }}{% if friend.bio|length > 60 %}...{% endif %}</small>
-                            {% endif %}
-                            <small class="text-muted">好友自 {{ friend.friends_since[:10] }}</small>
-                        </div>
+                        <form method="POST" action="{{ url_for('delete_friend', friend_id=friend.id) }}" class="m-0"
+                              onsubmit="return confirm('确定要删除好友 {{ friend.username }} 吗？');">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">🗑 删除</button>
+                        </form>
                     </div>
                     {% endfor %}
                 </div>
