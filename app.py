@@ -237,6 +237,35 @@ def add_comment(post_id):
     flash('💬 评论成功！', 'success')
     return redirect(url_for('timeline'))
 
+# ---------- 路由：删除动态 ----------
+@app.route('/post/delete/<int:post_id>', methods=['POST'])
+@login_required
+def delete_post(post_id):
+    user_id = session['user_id']
+    db = get_db()
+    
+    post = db.execute('SELECT user_id, image_path FROM posts WHERE id = ?', (post_id,)).fetchone()
+    if not post:
+        flash('动态不存在', 'danger')
+        return redirect(url_for('timeline'))
+    
+    if post['user_id'] != user_id:
+        flash('无权删除该动态', 'danger')
+        return redirect(url_for('timeline'))
+    
+    if post['image_path']:
+        image_filename = post['image_path'].split('/')[-1]
+        image_path = os.path.join(app.config['UPLOAD_FOLDER'], image_filename)
+        if os.path.exists(image_path):
+            os.remove(image_path)
+    
+    db.execute('DELETE FROM comments WHERE post_id = ?', (post_id,))
+    db.execute('DELETE FROM posts WHERE id = ?', (post_id,))
+    db.commit()
+    
+    flash('🗑️ 动态已删除', 'success')
+    return redirect(url_for('timeline'))
+
 # ---------- 路由：时间线 ----------
 @app.route('/timeline')
 @login_required
