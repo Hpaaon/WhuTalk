@@ -2,7 +2,8 @@ import os
 import sqlite3
 import hashlib
 import secrets
-from flask import Flask, render_template, request, redirect, url_for, session, flash, g
+from flask import Flask, render_template, request, redirect, url_for, session, flash, g, send_from_directory
+from werkzeug.utils import secure_filename
 from functools import wraps
 
 # ---------- 初始化配置 ----------
@@ -59,9 +60,34 @@ def init_db():
             FOREIGN KEY (friend_id) REFERENCES users (id),
             UNIQUE(user_id, friend_id)
         );
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (post_id) REFERENCES posts (id),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        );
     ''')
     db.commit()
     print("✅ 数据库初始化成功！")
+
+# ---------- 文件上传安全工具 ----------
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# ---------- 好友关系工具 ----------
+def get_accepted_friend_ids(user_id):
+    """获取所有已接受的好友 ID 列表（双向查询）"""
+    db = get_db()
+    friends = db.execute(
+        '''SELECT CASE WHEN user_id = ? THEN friend_id ELSE user_id END AS friend_id
+           FROM friendships
+           WHERE status = 'accepted' AND (user_id = ? OR friend_id = ?)''',
+        (user_id, user_id, user_id)
+    ).fetchall()
+    return [f['friend_id'] for f in friends]
 
 # ---------- 密码加密工具（M5：基础设施） ----------
 def hash_password(password):
@@ -151,12 +177,103 @@ def logout():
     flash('已安全退出', 'info')
     return redirect(url_for('login'))
 
-# ---------- 路由：时间线（占位，等下一阶段实现） ----------
+# ---------- 路由：上传文件静态服务 ----------
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# ---------- 路由：发布动态 ----------
+@app.route('/post', methods=['POST'])
+@login_required
+def create_post():
+    content = request.form.get('content', '').strip()
+    
+    if not content:
+        flash('动态内容不能为空', 'danger')
+        return redirect(url_for('timeline'))
+    
+    user_id = session['user_id']
+    image_path = None
+    
+    if 'image' in request.files:
+        file = request.files['image']
+        if file.filename and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            ext = filename.rsplit('.', 1)[1].lower()
+            new_filename = f"{secrets.token_hex(8)}_{os.urandom(4).hex()}.{ext}"
+            file.save(os.path.join(app.config['UPLOAD_FOLDER'], new_filename))
+            image_path = f"/uploads/{new_filename}"
+    
+    db = get_db()
+    db.execute('INSERT INTO posts (user_id, content, image_path) VALUES (?, ?, ?)',
+               (user_id, content, image_path))
+    db.commit()
+    
+    flash('🎉 动态发布成功！', 'success')
+    return redirect(url_for('timeline'))
+
+# ---------- 路由：发表评论 ----------
+@app.route('/comment/<int:post_id>', methods=['POST'])
+@login_required
+def add_comment(post_id):
+    content = request.form.get('content', '').strip()
+    
+    if not content:
+        flash('评论内容不能为空', 'danger')
+        return redirect(url_for('timeline'))
+    
+    user_id = session['user_id']
+    db = get_db()
+    
+    post = db.execute('SELECT id FROM posts WHERE id = ?', (post_id,)).fetchone()
+    if not post:
+        flash('动态不存在', 'danger')
+        return redirect(url_for('timeline'))
+    
+    db.execute('INSERT INTO comments (post_id, user_id, content) VALUES (?, ?, ?)',
+               (post_id, user_id, content))
+    db.commit()
+    
+    flash('💬 评论成功！', 'success')
+    return redirect(url_for('timeline'))
+
+# ---------- 路由：时间线 ----------
 @app.route('/timeline')
 @login_required
 def timeline():
-    # 临时占位，后面会被替换为真正的动态列表
-    return "<h1>时间线页面（待实现）</h1><p>你已经登录了，这里是动态流的占位页面。</p>"
+    user_id = session['user_id']
+    friend_ids = get_accepted_friend_ids(user_id)
+    
+    all_ids = [user_id] + friend_ids
+    placeholders = ','.join('?' * len(all_ids))
+    
+    db = get_db()
+    posts = db.execute(
+        f'''SELECT p.id, p.user_id, p.content, p.image_path, p.created_at,
+                   u.username, u.profile_pic
+            FROM posts p
+            JOIN users u ON p.user_id = u.id
+            WHERE p.user_id IN ({placeholders})
+            ORDER BY p.created_at DESC''',
+        all_ids
+    ).fetchall()
+    
+    posts_with_comments = []
+    for post in posts:
+        comments = db.execute(
+            '''SELECT c.id, c.user_id, c.content, c.created_at,
+                      u.username, u.profile_pic
+               FROM comments c
+               JOIN users u ON c.user_id = u.id
+               WHERE c.post_id = ?
+               ORDER BY c.created_at ASC''',
+            (post['id'],)
+        ).fetchall()
+        post_dict = dict(post)
+        post_dict['comments'] = comments
+        posts_with_comments.append(post_dict)
+    
+    return render_template('timeline.html', posts=posts_with_comments)
 
 # ========== 好友管理模块 ==========
 

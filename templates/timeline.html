@@ -1,0 +1,129 @@
+{% extends "layout.html" %}
+
+{% block title %}时间线{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <!-- 发布动态 -->
+        <div class="card shadow mb-4">
+            <div class="card-body">
+                <h5 class="card-title">📝 发布动态</h5>
+                <form method="POST" action="{{ url_for('create_post') }}" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <textarea class="form-control" name="content" rows="3"
+                                  placeholder="分享你的心情..." required></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <input type="file" class="form-control" name="image" accept="image/*">
+                    </div>
+                    <button type="submit" class="btn btn-primary">发布动态</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- 动态列表 -->
+        {% if posts %}
+            {% for post in posts %}
+            <div class="card shadow mb-4">
+                <div class="card-body">
+                    <!-- 发布者信息 -->
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="me-3">
+                            {% if post.profile_pic %}
+                            <img src="{{ post.profile_pic }}" alt="头像" class="rounded-circle"
+                                 width="48" height="48" style="object-fit: cover;">
+                            {% else %}
+                            <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white"
+                                 style="width: 48px; height: 48px; font-size: 18px;">
+                                {{ post.username[0] | upper }}
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div>
+                            <strong>{{ post.username }}</strong>
+                            <small class="text-muted d-block">{{ post.created_at[:16] }}</small>
+                        </div>
+                    </div>
+
+                    <!-- 动态内容 -->
+                    <p class="card-text">{{ post.content }}</p>
+
+                    <!-- 动态图片 -->
+                    {% if post.image_path %}
+                    <div class="mb-3">
+                        <img src="{{ post.image_path }}" alt="动态配图" class="img-fluid rounded"
+                             style="max-height: 400px; object-fit: contain;">
+                    </div>
+                    {% endif %}
+
+                    <!-- 评论区 -->
+                    <div class="border-top pt-3 mt-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="text-muted"><small>💬 {{ post.comments|length }} 条评论</small></span>
+                        </div>
+
+                        <!-- 评论列表 -->
+                        {% if post.comments %}
+                            {% for comment in post.comments %}
+                            <div class="d-flex align-items-start mb-2">
+                                <div class="me-2">
+                                    {% if comment.profile_pic %}
+                                    <img src="{{ comment.profile_pic }}" alt="头像" class="rounded-circle"
+                                         width="32" height="32" style="object-fit: cover;">
+                                    {% else %}
+                                    <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white"
+                                         style="width: 32px; height: 32px; font-size: 12px;">
+                                        {{ comment.username[0] | upper }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                <div class="flex-grow-1">
+                                    <strong class="text-sm">{{ comment.username }}</strong>
+                                    <span class="text-muted"><small>{{ comment.created_at[:16] }}</small></span>
+                                    <p class="text-sm mb-1">{{ comment.content }}</p>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                        <p class="text-muted text-sm">暂无评论，快来发表第一条评论吧！</p>
+                        {% endif %}
+
+                        <!-- 发表评论表单 -->
+                        <form method="POST" action="{{ url_for('add_comment', post_id=post.id) }}" class="mt-3">
+                            <div class="input-group">
+                                <input type="text" class="form-control" name="content"
+                                       placeholder="写下你的评论..." required>
+                                <button type="submit" class="btn btn-primary btn-sm">发送</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="card shadow">
+                <div class="card-body text-center">
+                    <p class="text-muted">📭 暂无动态</p>
+                    <p class="text-sm text-muted">发布你的第一条动态吧！</p>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- 右侧侧边栏 -->
+    <div class="col-md-4">
+        <div class="card shadow">
+            <div class="card-body">
+                <h5 class="card-title">📌 提示</h5>
+                <ul class="list-unstyled text-sm">
+                    <li class="mb-2">• 发布带图动态，分享精彩瞬间</li>
+                    <li class="mb-2">• 评论好友的动态，互动交流</li>
+                    <li class="mb-2">• 添加好友后可查看对方动态</li>
+                    <li>• 动态按时间倒序展示</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

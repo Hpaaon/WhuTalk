@@ -13,7 +13,7 @@
             <div class="navbar-nav ms-auto">
                 {% if session.user_id %}
                     <a class="nav-link" href="{{ url_for('timeline') }}">时间线</a>
-                    <a class="nav-link" href="{{ url_for('friends') }}">好友</a>
+                    <a class="nav-link" href="{{ url_for('friends') }}">好友管理</a>
                     <a class="nav-link" href="{{ url_for('logout') }}">退出登录</a>
                 {% else %}
                     <a class="nav-link" href="{{ url_for('login') }}">登录</a>
