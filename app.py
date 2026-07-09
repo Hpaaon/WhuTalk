@@ -678,13 +678,10 @@ def delete_friend(friend_id):
     flash(f'已删除好友 {name}', 'info')
     return redirect(url_for('friends'))
 
-# ---------- 路由：聊天会话列表 ----------
-@app.route('/chat')
-@login_required
-def chat_list():
-    user_id = session['user_id']
-    db = get_db()
-    
+# ---------- 辅助函数：获取侧边栏所需的数据 (会话列表 + 好友列表) ----------
+def get_chat_sidebar_data(db, user_id):
+    """提取公共逻辑：获取左侧的会话记录列表，以及弹窗所需的所有好友列表"""
+    # 获取历史会话列表
     sessions = db.execute(
         '''SELECT DISTINCT 
                CASE WHEN m.sender_id = ? THEN m.receiver_id ELSE m.sender_id END AS other_id,
@@ -718,8 +715,34 @@ def chat_list():
                 'last_message': last_msg['content'][:30] + '...' if last_msg else '',
                 'last_time': s['last_time']
             })
+            
+    # 获取所有互关好友
+    all_friends = db.execute('''
+        SELECT u.id, u.username, u.profile_pic 
+        FROM users u
+        JOIN friendships f ON (u.id = f.friend_id OR u.id = f.user_id)
+        WHERE (f.user_id = ? OR f.friend_id = ?) 
+          AND u.id != ? 
+          AND f.status = 'accepted'
+    ''', (user_id, user_id, user_id)).fetchall()
+
+    return chat_sessions, all_friends
+
+
+# ---------- 路由：聊天会话列表 (默认空白页) ----------
+@app.route('/chat')
+@login_required
+def chat_list():
+    user_id = session['user_id']
+    db = get_db()
     
-    return render_template('chat.html', sessions=chat_sessions, current_user_id=user_id)
+    chat_sessions, all_friends = get_chat_sidebar_data(db, user_id)
+    
+    return render_template('chat.html', 
+                           sessions=chat_sessions, 
+                           current_user_id=user_id, 
+                           all_friends=all_friends)
+
 
 # ---------- 路由：聊天历史 ----------
 @app.route('/chat/<int:friend_id>')
@@ -732,6 +755,8 @@ def chat_history(friend_id):
     if not friend:
         flash('好友不存在', 'danger')
         return redirect(url_for('chat_list'))
+    
+    chat_sessions, all_friends = get_chat_sidebar_data(db, user_id)
     
     messages = db.execute(
         '''SELECT m.id, m.sender_id, m.receiver_id, m.content, m.is_read, m.created_at,
@@ -747,7 +772,12 @@ def chat_history(friend_id):
                (user_id, friend_id))
     db.commit()
     
-    return render_template('chat.html', friend=friend, messages=messages, current_user_id=user_id)
+    return render_template('chat.html', 
+                           friend=friend, 
+                           messages=messages, 
+                           sessions=chat_sessions,       
+                           current_user_id=user_id, 
+                           all_friends=all_friends)      
 
 # ---------- 启动应用 ----------
 if __name__ == '__main__':

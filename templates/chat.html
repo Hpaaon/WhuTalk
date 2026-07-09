@@ -7,8 +7,12 @@
     <!-- 会话列表 -->
     <div class="col-md-4 border-right">
         <div class="card h-100">
-            <div class="card-header">
-                <h5 class="card-title">💬 聊天会话</h5>
+            <!-- 发起聊天 -->
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">💬 聊天会话</h5>
+                <button type="button" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#newChatModal">
+                    + 发起聊天
+                </button>
             </div>
             <div class="card-body overflow-auto">
                 {% if sessions %}
@@ -36,7 +40,10 @@
                     </a>
                     {% endfor %}
                 {% else %}
-                    <p class="text-muted text-center py-4">暂无聊天记录</p>
+                    <div class="text-center py-4">
+                        <p class="text-muted mb-2">暂无聊天记录</p>
+                        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#newChatModal">找好友聊聊</button>
+                    </div>
                 {% endif %}
             </div>
         </div>
@@ -103,13 +110,56 @@
         </div>
         {% else %}
         <div class="card h-100">
-            <div class="card-body d-flex align-items-center justify-content-center">
-                <p class="text-muted">选择一个会话开始聊天</p>
+            <div class="card-body d-flex flex-column align-items-center justify-content-center">
+                <p class="text-muted mb-3">选择一个会话开始聊天</p>
             </div>
         </div>
         {% endif %}
     </div>
 </div>
+
+<!-- ================= 好友列表弹窗 ================= -->
+<div class="modal fade" id="newChatModal" tabindex="-1" aria-labelledby="newChatModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="newChatModalLabel">发起新聊天</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="friendSelect" class="form-label">选择你要聊天的朋友</label>
+                    <select class="form-select" id="friendSelect">
+                        <option value="" selected disabled>-- 请选择 --</option>
+                        {% if all_friends %}
+                            {% for f in all_friends %}
+                                <option value="{{ f.id }}">{{ f.username }}</option>
+                            {% endfor %}
+                        {% else %}
+                            <option value="" disabled>您还没有添加好友</option>
+                        {% endif %}
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" onclick="startNewChat()">确认并发起</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function startNewChat() {
+        const friendId = document.getElementById('friendSelect').value;
+        if (friendId) {
+            const baseUrl = "{{ url_for('chat_history', friend_id=0) }}";
+            window.location.href = baseUrl.replace('0', friendId);
+        } else {
+            alert('请先在下拉菜单中选择一个好友！');
+        }
+    }
+</script>
 
 {% if friend %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
